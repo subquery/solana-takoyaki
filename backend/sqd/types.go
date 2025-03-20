@@ -19,14 +19,12 @@ type SolanaRequest struct {
 	// Fields to.select, see the specific types for provided details
 	Fields Fields `json:"fields,omitempty"`
 
-	Transactions []TransactionRequest `json:"transactions,omitempty"`
-	Instructions []InstructionRequest `json:"instructions,omitempty"`
-	Logs         []LogRequest         `json:"logs,omitempty"`
-	Rewards      []RewardRequest      `json:"rewards,omitempty"`
-
-	/*Not implemented*/
-	// Balances
-	// TokenBalances
+	Transactions  []TransactionRequest  `json:"transactions,omitempty"`
+	Instructions  []InstructionRequest  `json:"instructions,omitempty"`
+	Logs          []LogRequest          `json:"logs,omitempty"`
+	Rewards       []RewardRequest       `json:"rewards,omitempty"`
+	TokenBalances []TokenBalanceRequest `json:"tokenBalances,omitempty"`
+	Balances      []BalancesRequest     `json:"balances,omitempty"`
 }
 
 // Need custom serialization for sqd interface that differs from default json.Marshal
@@ -35,13 +33,13 @@ func (s SolanaRequest) MarshalJSON() ([]byte, error) {
 }
 
 type SolanaBlockResponse struct {
-	Header        blockHeader           `json:"header"`
-	Transactions  []TransactionResponse `json:"transactions"`
-	Instructions  []InstructionResponse `json:"instructions"`
-	Logs          []LogResponse         `json:"logs"`
-	Balances      []balance             `json:"balances"`
-	TokenBalances []tokenBalance        `json:"tokenBalances"`
-	Rewards       []reward              `json:"rewards"`
+	Header        blockHeader    `json:"header"`
+	Transactions  []transaction  `json:"transactions"` // Excludes all Voting Program transactions
+	Instructions  []instruction  `json:"instructions"`
+	Logs          []LogResponse  `json:"logs"`     // Wrong type
+	Balances      []balance      `json:"balances"` // Only seems to contain the balances of accounts where balances changed
+	TokenBalances []tokenBalance `json:"tokenBalances"`
+	Rewards       []reward       `json:"rewards"`
 }
 
 type Fields struct {
@@ -124,10 +122,31 @@ type RewardRequest struct {
 	PubKey []string `json:"pubkey,omitempty"`
 }
 
+type BalancesRequest struct {
+	Account []string `json:"account,omitempty"`
+
+	Transaction             bool `json:"transaction,omitempty"`
+	TransactionInstructions bool `json:"transactionInstructions,omitempty"`
+}
+
+type TokenBalanceRequest struct {
+	Account       []string `json:"account,omitempty"`
+	PreProgramId  []string `json:"preProgramId,omitempty"`
+	PostProgramId []string `json:"postProgramId,omitempty"`
+	PreMint       []string `json:"preMint,omitempty"`
+	PostMint      []string `json:"postMint,omitempty"`
+	PreOwner      []string `json:"preOwner,omitempty"`
+	PostOwner     []string `json:"postOwner,omitempty"`
+
+	Transaction             *bool `json:"transaction,omitempty"`
+	TransactionInstructions *bool `json:"transactionInstructions,omitempty"`
+}
+
 type instruction struct {
 	// independent of field selectors
-	TransactionIndex   uint   `json:"transactionIndex"`
-	InstructionAddress []uint `json:"instructionAddress"`
+	TransactionIndex uint `json:"transactionIndex"`
+	// Used to identify inner instructions. https://docs.sqd.ai/solana-indexing/sdk/solana-batch/field-selection/#instruction
+	InstructionAddress []uint64 `json:"instructionAddress"`
 
 	// can be disabled with field selectors
 	ProgramId   string   `json:"programId"`
@@ -136,7 +155,7 @@ type instruction struct {
 	IsCommitted bool     `json:"isCommitted"`
 
 	// can be enabled with field selectors
-	ComputeUnitsConsumed  string  `json:"computeUnitsConsumed"` // TODO will need json parsing
+	ComputeUnitsConsumed  string  `json:"computeUnitsConsumed"`
 	Error                 *string `json:"error"`
 	HasDroppedLogMessages bool    `json:"hasDroppedLogMessages"`
 }
@@ -157,9 +176,10 @@ type transaction struct {
 	NumReadonlyUnsignedAccounts uint                   `json:"numReadonlyUnsignedAccounts"`
 	NumRequiredSignatures       uint                   `json:"numRequiredSignatures"`
 	RecentBlockhash             string                 `json:"recentBlockhash"`
-	ComputeUnitsConsumed        uint64                 `json:"computeUnitsConsumed"` // TODO will need json parsing
-	Fee                         uint64                 `json:"fee"`                  // TODO will need json parsing
-	LoadedAddresses             loadedAddresses        `json:"loadedAddresses"`      // request the whole struct with loadedAddresses: true
+	ComputeUnitsConsumed        uint64                 `json:"computeUnitsConsumed"`
+	Fee                         string                 `json:"fee"`
+	FeePayer                    string                 `json:"feePayer"`        // Undocumented
+	LoadedAddresses             loadedAddresses        `json:"loadedAddresses"` // request the whole struct with loadedAddresses: true
 	HasDroppedLogMessages       bool                   `json:"hasDroppedLogMessages"`
 }
 
@@ -177,12 +197,12 @@ type logMessage struct {
 
 type balance struct {
 	// independent of field selectors
-	TransactionIndex uint     `json:"transactionIndex"`
-	Account          []string `json:"account"`
+	TransactionIndex uint   `json:"transactionIndex"`
+	Account          string `json:"account"`
 
 	// can be disabled with field selectors
-	Pre  uint `json:"pre"`
-	Post uint `json:"post"`
+	Pre  string `json:"pre"`
+	Post string `json:"post"`
 }
 
 type loadedAddresses struct {
@@ -190,8 +210,11 @@ type loadedAddresses struct {
 	Writable []string `json:"writable"`
 }
 
+// These values always seem to be null unable to determine types
 type addressTableLookup struct {
-	// TODO
+	AccountKey      string  `json:"accountKey"`
+	ReadonlyIndexes []uint8 `json:"readonlyIndexes"`
+	WritableIndexes []uint8 `json:"writableIndexes"`
 }
 
 type reward struct {
@@ -228,11 +251,11 @@ type tokenBalance struct {
 	PreMint      string  `json:"preMint"`
 	PreDecimals  uint8   `json:"preDecimals"`
 	PreOwner     *string `json:"preOwner"`
-	PreAmount    uint    `json:"preAmount"`
+	PreAmount    string  `json:"preAmount"`
 	PostMint     string  `json:"postMint"`
 	PostDecimals uint8   `json:"postDecimals"`
 	PostOwner    *string `json:"postOwner"`
-	PostAmount   uint    `json:"postAmount"`
+	PostAmount   string  `json:"postAmount"`
 
 	// can be enabled by field selectors
 	PostProgramId *string `json:"postProgramId"`

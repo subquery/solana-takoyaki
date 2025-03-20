@@ -13,11 +13,24 @@ var FULL_BLOCK_REQUEST = SolanaRequest{
 	FromBlock: 305_604_799,
 	ToBlock:   305_604_800,
 	Fields: Fields{
-		Instruction: map[string]bool{"programId": true},
+		Instruction: map[string]bool{
+			"programId": true,
+			"data":      true,
+			"accounts":  true,
+			// "instructionAddress": true,
+		},
 		Transaction: map[string]bool{
-			"accountKeys":         true,
-			"addressTableLookups": true,
-			"fee":                 true,
+			"accountKeys":                 true,
+			"loadedAddresses":             true,
+			"feePayer":                    true,
+			"fee":                         true,
+			"err":                         true,
+			"signatures":                  true,
+			"numReadonlySignedAccounts":   true,
+			"numReadonlyUnsignedAccounts": true,
+			"numRequiredSignatures":       true,
+			"addressTableLookups":         true,
+			// "recentBlockhash":             true, // Doesn't work, RPC returns an error
 		},
 		Log: map[string]bool{
 			"kind": true,
@@ -33,10 +46,32 @@ var FULL_BLOCK_REQUEST = SolanaRequest{
 			"parentSlot": true,
 			"timestamp":  true,
 		},
+		TokenBalance: map[string]bool{
+			"preMint":       true,
+			"preDecimals":   true,
+			"preOwner":      true,
+			"preAmount":     true,
+			"postMint":      true,
+			"postDecimals":  true,
+			"postOwner":     true,
+			"postAmount":    true,
+			"postProgramId": true,
+			"preProgramId":  true,
+		},
+		Balance: map[string]bool{
+			"pre":  true,
+			"post": true,
+		},
 	},
 	Transactions: []TransactionRequest{{}}, // Empty item means no filter
-	Instructions: []InstructionRequest{{}},
-	Rewards:      []RewardRequest{{}},
+	Instructions: []InstructionRequest{
+		// {IsCommitted: true, Transaction: true},
+		// {IsCommitted: false, Transaction: true},
+		{},
+	},
+	Rewards:       []RewardRequest{{}},
+	TokenBalances: []TokenBalanceRequest{{}},
+	Balances:      []BalancesRequest{{}},
 }
 
 func TestGetDataSourceUrl(t *testing.T) {

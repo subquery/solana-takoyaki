@@ -58,7 +58,8 @@ func (c *Client) Query(req SolanaRequest) ([]SolanaBlockResponse, error) {
 		return nil, err
 	}
 
-	// fmt.Println("RAW REQ", string(rawReq))
+	fmt.Println("SERVER", workerUrl)
+	fmt.Println("RAW REQ", string(rawReq))
 
 	res, err := http.Post(workerUrl, "application/json", bytes.NewBuffer(rawReq))
 	if err != nil {
