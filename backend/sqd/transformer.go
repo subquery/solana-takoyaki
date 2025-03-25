@@ -7,22 +7,17 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/gagliardetto/solana-go"
-	"github.com/gagliardetto/solana-go/rpc"
-	"github.com/mr-tron/base58"
+	"github.com/subquery/solana-takoyaki/solana"
 )
 
-func TansformBlock(sqdBlock SolanaBlockResponse) (out *rpc.GetParsedBlockResult, err error) {
+func TansformBlock(sqdBlock SolanaBlockResponse) (out *solana.Block, err error) {
 
-	timestamp := solana.UnixTimeSeconds(sqdBlock.Header.Timestamp)
-
-	out = &rpc.GetParsedBlockResult{
-		BlockHeight:       &sqdBlock.Header.Height,
-		Blockhash:         solana.MustHashFromBase58(sqdBlock.Header.Hash),
-		PreviousBlockhash: solana.MustHashFromBase58(sqdBlock.Header.ParentHash),
+	out = &solana.Block{
+		BlockHeight:       sqdBlock.Header.Height,
+		Blockhash:         sqdBlock.Header.Hash,
+		PreviousBlockhash: sqdBlock.Header.ParentHash,
 		ParentSlot:        sqdBlock.Header.ParentSlot,
-		BlockTime:         &timestamp,
-		// NumRewardPartitions: 0, // TODO
+		BlockTime:         sqdBlock.Header.Timestamp,
 	}
 
 	// Transform Token Balances
@@ -32,20 +27,25 @@ func TansformBlock(sqdBlock SolanaBlockResponse) (out *rpc.GetParsedBlockResult,
 	}
 
 	// Transform Balances
-	preBalances, postBalances, err := groupBalances(sqdBlock.Balances)
+	preBalances, postBalances, err := groupBalances(sqdBlock.Balances, sqdBlock.Transactions)
 	if err != nil {
 		return nil, err
 	}
 
 	// Transform instructions
-	instructions, innerInstructions, err := groupInstructions(sqdBlock.Instructions)
+	instructions, innerInstructions, err := groupInstructions(sqdBlock.Instructions, sqdBlock.Transactions)
+	if err != nil {
+		return nil, err
+	}
+
+	logs, err := groupLogs(sqdBlock.Logs)
 	if err != nil {
 		return nil, err
 	}
 
 	// Transform Transactions
 	if out.Transactions == nil {
-		out.Transactions = []rpc.ParsedTransactionWithMeta{}
+		out.Transactions = []solana.Transaction{}
 	}
 	for _, tx := range sqdBlock.Transactions {
 		solanaTx, err := TransformTransaction(
@@ -57,6 +57,7 @@ func TansformBlock(sqdBlock SolanaBlockResponse) (out *rpc.GetParsedBlockResult,
 			postTokenBalances[tx.TransactionIndex],
 			instructions[tx.TransactionIndex],
 			innerInstructions[tx.TransactionIndex],
+			logs[tx.TransactionIndex],
 		)
 		if err != nil {
 			return nil, err
@@ -66,7 +67,7 @@ func TansformBlock(sqdBlock SolanaBlockResponse) (out *rpc.GetParsedBlockResult,
 
 	// Transform Rewards
 	if out.Rewards == nil {
-		out.Rewards = []rpc.BlockReward{}
+		out.Rewards = []solana.BlockReward{}
 	}
 	for _, reward := range sqdBlock.Rewards {
 		solanaReward, err := TransformReward(reward)
@@ -78,7 +79,7 @@ func TansformBlock(sqdBlock SolanaBlockResponse) (out *rpc.GetParsedBlockResult,
 
 	// Signatures
 	if out.Signatures == nil {
-		out.Signatures = []solana.Signature{}
+		out.Signatures = []string{}
 	}
 	// TODO fill signatures
 
@@ -90,20 +91,15 @@ func TransformTransaction(
 	header blockHeader,
 	preBalances []uint64,
 	postBalances []uint64,
-	preTokenBalance []rpc.TokenBalance,
-	postTokenBalance []rpc.TokenBalance,
-	instructions []*rpc.ParsedInstruction,
-	innerInstructions []rpc.ParsedInnerInstruction,
-) (out *rpc.ParsedTransactionWithMeta, err error) {
-	timestamp := solana.UnixTimeSeconds(header.Timestamp)
+	preTokenBalance []solana.TokenBalance,
+	postTokenBalance []solana.TokenBalance,
+	instructions []solana.CompiledInstruction,
+	innerInstructions []solana.InnerInstruction,
+	logs []string,
+) (out *solana.Transaction, err error) {
 	fee, err := strconv.ParseUint(in.Fee, 10, 64)
 	if err != nil {
 		return nil, err
-	}
-
-	sigs := []solana.Signature{}
-	for _, sig := range in.Signatures {
-		sigs = append(sigs, solana.MustSignatureFromBase58(sig))
 	}
 
 	sort.Slice(preTokenBalance, func(i, j int) bool {
@@ -114,25 +110,24 @@ func TransformTransaction(
 		return postTokenBalance[i].AccountIndex < postTokenBalance[j].AccountIndex
 	})
 
-	out = &rpc.ParsedTransactionWithMeta{
+	out = &solana.Transaction{
 		Slot:      header.Slot,
-		BlockTime: &timestamp,
-		Meta: &rpc.ParsedTransactionMeta{
+		BlockTime: header.Timestamp,
+		Meta: &solana.TransactionMeta{
 			Err:               in.Err,
 			Fee:               fee,
-			PreBalances:       preBalances,  // Incomplete data
-			PostBalances:      postBalances, // Incomplete data
+			PreBalances:       preBalances,  // Incomplete data, only included balances that change
+			PostBalances:      postBalances, // Incomplete data, only included balances that change
 			InnerInstructions: innerInstructions,
 			PreTokenBalances:  preTokenBalance,
 			PostTokenBalances: postTokenBalance,
-			LogMessages:       []string{}, // TODO
+			LogMessages:       logs, // Missing program invoke, success and consumed compute units logs
 		},
-		Transaction: &rpc.ParsedTransaction{
-			Signatures: sigs,
-			Message: rpc.ParsedMessage{
-				AccountKeys:     TransformParsedMessageAccount(in), // Missing data
-				Instructions:    instructions,
-				RecentBlockHash: "", // TODO
+		Transaction: &solana.JSONTransaction{
+			Signatures: in.Signatures,
+			Message: solana.Message{
+				AccountKeys:  in.AccountKeys,
+				Instructions: instructions,
 			},
 		},
 	}
@@ -140,29 +135,53 @@ func TransformTransaction(
 	return out, nil
 }
 
-func TransformParsedMessageAccount(in transaction) (out []rpc.ParsedMessageAccount) {
-	out = []rpc.ParsedMessageAccount{}
-
-	if in.TransactionIndex == 16 {
-		fmt.Println("ACCT KEYS", in.AccountKeys)
-		fmt.Println("TALBE LOOKUPS", in.AddressTableLookups)
-		fmt.Println("LOADED ADDRS", in.LoadedAddresses)
+func TransformInstruction(in instruction, tx transaction) (out *solana.CompiledInstruction, err error) {
+	accounts := []uint16{}
+	for _, account := range in.Accounts {
+		idx, err := findAddressIndex(account, tx)
+		if err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, uint16(idx))
 	}
 
-	for _, accountKey := range in.AccountKeys {
-		pubkey := solana.MustPublicKeyFromBase58(accountKey)
-		out = append(out, rpc.ParsedMessageAccount{
-			PublicKey: pubkey,
-			// SQD assume the first account key is the fee payer. https://github.com/subsquid/archive.py/blob/a585e7121b32fe8dda7e723a7e7b626ecef851a3/sqa/solana/writer/parquet.py#L116
-			Signer:   accountKey == in.FeePayer,
-			Writable: slices.Contains(in.LoadedAddresses.Writable, accountKey),
-		})
+	programIdIndex, err := findAddressIndex(in.ProgramId, tx)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to find programIdIndex: %v", tx)
 	}
 
-	return out
+	out = &solana.CompiledInstruction{
+		ProgramIDIndex: uint16(programIdIndex),
+		Data:           in.Data,
+		Accounts:       accounts,
+	}
+	return out, nil
 }
 
-func TransformReward(in reward) (*rpc.BlockReward, error) {
+func findAddressIndex(account string, tx transaction) (int, error) {
+	idx := slices.Index(tx.AccountKeys, account)
+	if idx >= 0 {
+		return idx, nil
+	}
+
+	// Try the Loaded Addresses Writable with an offset of AccountKeys
+	wLookupIdx := slices.Index(tx.LoadedAddresses.Writable, account)
+	if wLookupIdx >= 0 {
+		accountIdx := len(tx.AccountKeys) + wLookupIdx
+		return accountIdx, nil
+	}
+
+	// Try the Loaded Addresses Readable with an offset of AccountKeys + Writable
+	rLookupIdx := slices.Index(tx.LoadedAddresses.Readonly, account)
+	if rLookupIdx >= 0 {
+		accountIdx := len(tx.AccountKeys) + len(tx.LoadedAddresses.Writable) + rLookupIdx
+		return accountIdx, nil
+	}
+
+	return -1, fmt.Errorf("Unable to find account key: %v", account)
+}
+
+func TransformReward(in reward) (*solana.BlockReward, error) {
 	lamports, err := strconv.ParseInt(in.Lamports, 10, 64)
 	if err != nil {
 		return nil, err
@@ -172,52 +191,48 @@ func TransformReward(in reward) (*rpc.BlockReward, error) {
 		return nil, err
 	}
 
-	out := &rpc.BlockReward{
-		Pubkey:      solana.MustPublicKeyFromBase58(in.Pubkey),
+	out := &solana.BlockReward{
+		Pubkey:      in.Pubkey,
 		Lamports:    lamports,
 		PostBalance: postBalance,
-		RewardType:  rpc.RewardType(*in.RewardType),
+		RewardType:  solana.RewardType(*in.RewardType),
 		Commission:  in.Commission,
 	}
 
 	return out, nil
 }
 
-func TransformTokenBalance(in tokenBalance, tx transaction) (pre *rpc.TokenBalance, post *rpc.TokenBalance, err error) {
-	parse := func(owner, programId *string, mint, amount string, decimals uint8) (*rpc.TokenBalance, error) {
-		var _owner, _programId solana.PublicKey
-		if owner != nil {
-			_owner = solana.MustPublicKeyFromBase58(*owner)
-		}
-		if programId != nil {
-			_programId = solana.MustPublicKeyFromBase58(*programId)
-		}
-
-		_mint := solana.MustPublicKeyFromBase58(mint)
-
+func TransformTokenBalance(in tokenBalance, tx transaction) (pre *solana.TokenBalance, post *solana.TokenBalance, err error) {
+	parse := func(owner, programId *string, mint, amount string, decimals uint8) (*solana.TokenBalance, error) {
 		amountInt, err := strconv.ParseInt(amount, 10, 64)
 		if err != nil {
 			return nil, err
 		}
-		uiAmount := shiftDecimalPlaces(amountInt, int(decimals))
 
-		idx := slices.Index(tx.AccountKeys, in.Account)
-		// TODO restore this
-		// if idx < 0 {
-		// 	return nil, fmt.Errorf("Unable to find account key: %v", in.Account)
-		// }
+		uiTokenAmount := &solana.UiTokenAmount{
+			Amount:         amount,
+			Decimals:       decimals,
+			UiAmountString: "0",
+		}
 
-		return &rpc.TokenBalance{
-			AccountIndex: uint16(idx),
-			Owner:        &_owner,
-			ProgramId:    &_programId,
-			Mint:         _mint,
-			UiTokenAmount: &rpc.UiTokenAmount{
-				Amount:         amount,
-				Decimals:       decimals,
-				UiAmount:       &uiAmount,
-				UiAmountString: strconv.FormatFloat(uiAmount, byte('f'), int(decimals), 64),
-			},
+		// Values are only set for non-zero amounts
+		if amount != "0" {
+			uiAmount := shiftDecimalPlaces(amountInt, int(decimals))
+			uiTokenAmount.UiAmount = &uiAmount
+			uiTokenAmount.UiAmountString = strconv.FormatFloat(uiAmount, byte('f'), int(decimals), 64)
+		}
+
+		idx, err := findAddressIndex(in.Account, tx)
+		if err != nil {
+			return nil, err
+		}
+
+		return &solana.TokenBalance{
+			AccountIndex:  uint16(idx),
+			Owner:         owner,
+			ProgramId:     programId,
+			Mint:          mint,
+			UiTokenAmount: uiTokenAmount,
 		}, nil
 	}
 
@@ -244,43 +259,19 @@ func TransformTokenBalance(in tokenBalance, tx transaction) (pre *rpc.TokenBalan
 	return pre, post, err
 }
 
-func TransformInstruction(in instruction) (out *rpc.ParsedInstruction, err error) {
-	programId := solana.MustPublicKeyFromBase58(in.ProgramId)
-
-	accounts := []solana.PublicKey{}
-	for _, account := range in.Accounts {
-		accounts = append(accounts, solana.MustPublicKeyFromBase58(account))
-	}
-
-	data := solana.Base58{}
-	if len(in.Data) > 0 {
-		dataB, err := base58.Decode(in.Data)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to parse instruction data: %v", err)
-		}
-		data = solana.Base58(dataB)
-	}
-
-	out = &rpc.ParsedInstruction{
-		Program:     "", // TODO
-		ProgramId:   programId,
-		Parsed:      nil, // TODO
-		Data:        data,
-		Accounts:    accounts,
-		StackHeight: 0, // TODO
-	}
-	return out, nil
-}
-
 func shiftDecimalPlaces(input int64, places int) float64 {
 	return float64(input) / math.Pow10(places)
 }
 
-func groupInstructions(instructions []instruction) (out map[uint][]*rpc.ParsedInstruction, inner map[uint][]rpc.ParsedInnerInstruction, err error) {
-	out = map[uint][]*rpc.ParsedInstruction{}
-	innerInternal := map[uint]map[uint64]*rpc.ParsedInnerInstruction{}
+func groupInstructions(instructions []instruction, txs []transaction) (out map[uint][]solana.CompiledInstruction, inner map[uint][]solana.InnerInstruction, err error) {
+	out = map[uint][]solana.CompiledInstruction{}
+	innerInternal := map[uint]map[uint64]*solana.InnerInstruction{}
 	for _, instruction := range instructions {
-		inst, err := TransformInstruction(instruction)
+		tx, err := getTransactionByIndex(txs, instruction.TransactionIndex)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Unable to find transaction for instruction: %v", err)
+		}
+		inst, err := TransformInstruction(instruction, *tx)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -288,27 +279,27 @@ func groupInstructions(instructions []instruction) (out map[uint][]*rpc.ParsedIn
 		// Inner instructions have an array len > 1. See instruction struct definition for more info
 		if len(instruction.InstructionAddress) == 1 {
 			if out[instruction.TransactionIndex] == nil {
-				out[instruction.TransactionIndex] = []*rpc.ParsedInstruction{}
+				out[instruction.TransactionIndex] = []solana.CompiledInstruction{}
 			}
-			out[instruction.TransactionIndex] = append(out[instruction.TransactionIndex], inst)
+			out[instruction.TransactionIndex] = append(out[instruction.TransactionIndex], *inst)
 		} else {
 			if innerInternal[instruction.TransactionIndex] == nil {
-				innerInternal[instruction.TransactionIndex] = map[uint64]*rpc.ParsedInnerInstruction{}
+				innerInternal[instruction.TransactionIndex] = map[uint64]*solana.InnerInstruction{}
 			}
 			innerIdx := instruction.InstructionAddress[0]
 			if innerInternal[instruction.TransactionIndex][innerIdx] == nil {
-				innerInternal[instruction.TransactionIndex][innerIdx] = &rpc.ParsedInnerInstruction{
+				innerInternal[instruction.TransactionIndex][innerIdx] = &solana.InnerInstruction{
 					Index:        innerIdx,
-					Instructions: []*rpc.ParsedInstruction{},
+					Instructions: []solana.CompiledInstruction{},
 				}
 			}
 
-			innerInternal[instruction.TransactionIndex][innerIdx].Instructions = append(innerInternal[instruction.TransactionIndex][innerIdx].Instructions, inst)
+			innerInternal[instruction.TransactionIndex][innerIdx].Instructions = append(innerInternal[instruction.TransactionIndex][innerIdx].Instructions, *inst)
 		}
 	}
 
 	// Flatten inner instructions
-	inner = map[uint][]rpc.ParsedInnerInstruction{}
+	inner = map[uint][]solana.InnerInstruction{}
 	for txIdx, innerInst := range innerInternal {
 		for _, inst := range innerInst {
 			inner[txIdx] = append(inner[txIdx], *inst)
@@ -318,42 +309,65 @@ func groupInstructions(instructions []instruction) (out map[uint][]*rpc.ParsedIn
 	return out, inner, nil
 }
 
-func groupBalances(in []balance) (preBalances, postBalances map[uint][]uint64, err error) {
+func groupBalances(in []balance, txs []transaction) (preBalances, postBalances map[uint][]uint64, err error) {
 	preBalances = map[uint][]uint64{}
 	postBalances = map[uint][]uint64{}
+
+	// Group balances by the tx so we can sort them
+	bxs := map[uint][]balance{}
 	for _, balance := range in {
-		if preBalances[balance.TransactionIndex] == nil {
-			preBalances[balance.TransactionIndex] = []uint64{}
-		}
-		if postBalances[balance.TransactionIndex] == nil {
-			postBalances[balance.TransactionIndex] = []uint64{}
+		bxs[balance.TransactionIndex] = append(bxs[balance.TransactionIndex], balance)
+	}
+
+	for txIdx, txBals := range bxs {
+		tx, err := getTransactionByIndex(txs, txIdx)
+		if err != nil {
+			return nil, nil, err
 		}
 
-		preBal, err := strconv.ParseUint(balance.Pre, 10, 64)
-		if err != nil {
-			return nil, nil, fmt.Errorf("Unable to parse pre balance: %v", err)
-		}
-		postBal, err := strconv.ParseUint(balance.Post, 10, 64)
-		if err != nil {
-			return nil, nil, fmt.Errorf("Unable to parse post balance: %v", err)
-		}
+		// Sort the balances by the account index in the transaction
+		slices.SortFunc(txBals, func(i, j balance) int {
+			accountIdxI, _ := findAddressIndex(i.Account, *tx)
+			accountIdxJ, _ := findAddressIndex(j.Account, *tx)
 
-		preBalances[balance.TransactionIndex] = append(preBalances[balance.TransactionIndex], preBal)
-		postBalances[balance.TransactionIndex] = append(postBalances[balance.TransactionIndex], postBal)
+			return int(accountIdxI) - int(accountIdxJ)
+		})
+
+		// Split the balances into pre and post balances
+		for _, bal := range txBals {
+			if preBalances[txIdx] == nil {
+				preBalances[txIdx] = []uint64{}
+			}
+			if postBalances[txIdx] == nil {
+				postBalances[txIdx] = []uint64{}
+			}
+
+			preBal, err := strconv.ParseUint(bal.Pre, 10, 64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("Unable to parse pre balance: %v", err)
+			}
+			postBal, err := strconv.ParseUint(bal.Post, 10, 64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("Unable to parse post balance: %v", err)
+			}
+
+			preBalances[txIdx] = append(preBalances[txIdx], preBal)
+			postBalances[txIdx] = append(postBalances[txIdx], postBal)
+		}
 	}
 
 	return preBalances, postBalances, nil
 }
 
-func groupTokenBalances(in []tokenBalance, txs []transaction) (preTokenBalances, postTokenBalances map[uint][]rpc.TokenBalance, err error) {
-	preTokenBalances = map[uint][]rpc.TokenBalance{}
-	postTokenBalances = map[uint][]rpc.TokenBalance{}
+func groupTokenBalances(in []tokenBalance, txs []transaction) (preTokenBalances, postTokenBalances map[uint][]solana.TokenBalance, err error) {
+	preTokenBalances = map[uint][]solana.TokenBalance{}
+	postTokenBalances = map[uint][]solana.TokenBalance{}
 	for _, balance := range in {
 		if preTokenBalances[balance.TransactionIndex] == nil {
-			preTokenBalances[balance.TransactionIndex] = []rpc.TokenBalance{}
+			preTokenBalances[balance.TransactionIndex] = []solana.TokenBalance{}
 		}
 		if postTokenBalances[balance.TransactionIndex] == nil {
-			postTokenBalances[balance.TransactionIndex] = []rpc.TokenBalance{}
+			postTokenBalances[balance.TransactionIndex] = []solana.TokenBalance{}
 		}
 
 		tx, err := getTransactionByIndex(txs, balance.TransactionIndex)
@@ -374,6 +388,18 @@ func groupTokenBalances(in []tokenBalance, txs []transaction) (preTokenBalances,
 	}
 
 	return preTokenBalances, postTokenBalances, nil
+}
+
+func groupLogs(in []logMessage) (out map[uint][]string, err error) {
+	out = map[uint][]string{}
+	for _, log := range in {
+		if out[log.TransactionIndex] == nil {
+			out[log.TransactionIndex] = []string{}
+		}
+		out[log.TransactionIndex] = append(out[log.TransactionIndex], log.String())
+	}
+
+	return out, nil
 }
 
 func getTransactionByIndex(txs []transaction, idx uint) (*transaction, error) {

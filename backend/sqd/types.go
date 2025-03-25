@@ -1,6 +1,8 @@
 package sqd
 
 import (
+	"fmt"
+
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/subquery/solana-takoyaki/utils"
 )
@@ -36,7 +38,7 @@ type SolanaBlockResponse struct {
 	Header        blockHeader    `json:"header"`
 	Transactions  []transaction  `json:"transactions"` // Excludes all Voting Program transactions
 	Instructions  []instruction  `json:"instructions"`
-	Logs          []LogResponse  `json:"logs"`     // Wrong type
+	Logs          []logMessage   `json:"logs"`
 	Balances      []balance      `json:"balances"` // Only seems to contain the balances of accounts where balances changed
 	TokenBalances []tokenBalance `json:"tokenBalances"`
 	Rewards       []reward       `json:"rewards"`
@@ -104,8 +106,8 @@ type InstructionResponse struct {
 
 type LogRequest struct {
 	/* Filters */
-	ProgramId []string `json:"programId"`
-	Kind      []string `json:"kind"` // 'log' | 'data' | 'other'
+	ProgramId []string `json:"programId,omitempty"`
+	Kind      []string `json:"kind,omitempty"` // 'log' | 'data' | 'other'
 
 	/* Field Selection */
 	Transaction bool `json:"transaction,omitempty"`
@@ -193,6 +195,18 @@ type logMessage struct {
 	ProgramId string `json:"programId"`
 	Kind      string `json:"kind"` //'log' | 'data' | 'other'
 	Message   string `json:"message"`
+}
+
+func (l *logMessage) String() string {
+	switch l.Kind {
+	case "log":
+		return fmt.Sprintf("Program log: %v", l.Message)
+	case "data":
+		return fmt.Sprintf("Program data: %v", l.Message) // Example https://solscan.io/tx/57moryaDygCpmdG5Bx9DTpwdrkz7QYVhD4Gqf8srN2PX4ZXp5SQDemMwRzgFj6dtbG7W5RUv4S2KadetiB4NJtqV `Program data: GmTE6l15n9+1K0GKz0oSSO8oves0qt09GsKz1QNA3hkOpcvC0rPMywt4KffaIJMAVQlyjQhUVOXGyn09Lxu29Ty1k5m72ijBAIkB9C0BAAAAAAAjpZzi/////6zzsgcAAAAAAAAAAAAAAAAA`
+	case "other":
+		return l.Message // Example https://solscan.io/tx/5skPYHKGg46Bv271wERLGxD9pPR3KnyovLqhRtyw6N3vUZybskWijJHFXWyaqHbjjrdtxirDGdQ71KfpCgRuegZ8 `Program return: JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 RJG4pwkAAAA=`
+	}
+	return ""
 }
 
 type balance struct {

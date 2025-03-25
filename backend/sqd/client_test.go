@@ -1,7 +1,6 @@
 package sqd
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -30,10 +29,12 @@ var FULL_BLOCK_REQUEST = SolanaRequest{
 			"numReadonlyUnsignedAccounts": true,
 			"numRequiredSignatures":       true,
 			"addressTableLookups":         true,
-			// "recentBlockhash":             true, // Doesn't work, RPC returns an error
+			// "recentBlockhash":             true, // Doesn't work, RPC returns an error, possibly a typeo on the SQD query service: recentBlockhash should be recentBlockHash
 		},
 		Log: map[string]bool{
-			"kind": true,
+			"kind":      true,
+			"programId": true,
+			"message":   true,
 		},
 		Reward: map[string]bool{
 			"rewardType":  true,
@@ -72,6 +73,7 @@ var FULL_BLOCK_REQUEST = SolanaRequest{
 	Rewards:       []RewardRequest{{}},
 	TokenBalances: []TokenBalanceRequest{{}},
 	Balances:      []BalancesRequest{{}},
+	Logs:          []LogRequest{{}},
 }
 
 func TestGetDataSourceUrl(t *testing.T) {
@@ -142,9 +144,7 @@ func TestQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fmt.Println(res[0].Header)
-
-	// https://solscan.io/block/327347682
+	// https://solscan.io/block/327347682 (slot 327_347_682 = block 305_604_799)
 	block := res[0]
 	if block.Header.Height != 305_604_799 {
 		t.Errorf("Expected block height %v. Got: %v", 305_604_799, block.Header.Height)
@@ -154,14 +154,13 @@ func TestQuery(t *testing.T) {
 		t.Errorf("Expected block hash %v. Got: %v", "5FqMrgbiEmh22E9puyX4RV2EnARvwYBHgsTKYQ9a52Er", block.Header.Hash)
 	}
 
-	if len(block.Transactions) != 1_757 {
-		t.Errorf("Expected %v transactions. Got %v transactions", 1_757, len(block.Transactions))
+	// Doesn't include voting program transactions
+	if len(block.Transactions) != 441 {
+		t.Errorf("Expected %v transactions. Got %v transactions", 441, len(block.Transactions))
 	}
 
 	// TODO check this is correct
 	if len(block.Instructions) != 3_568 {
 		t.Errorf("Expected %v instructions. Got %v instructions", 3_568, len(block.Instructions))
 	}
-
-	// t.Fatal("Not enough validatiaon")
 }
