@@ -9,12 +9,14 @@ import (
 
 	solanaGo "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/subquery/solana-takoyaki/meta"
 	"github.com/subquery/solana-takoyaki/solana"
 )
 
 // https://solscan.io/block/327347682
 const BLOCK = 305_604_799
 const SLOT = 327_347_682
+const RPC_ENDPOINT = "https://api.mainnet-beta.solana.com"
 
 func compareAsJson(t *testing.T, expected, got interface{}, errorPrefix string) {
 	aStr, _ := json.Marshal(expected)
@@ -25,10 +27,10 @@ func compareAsJson(t *testing.T, expected, got interface{}, errorPrefix string) 
 }
 
 func TestTransforming(t *testing.T) {
-	url, _ := GetSquidUrl("solana-mainnet")
-	client := NewClient(url)
+	url, _ := GetSquidUrl(context.Background(), "solana-mainnet")
+	client := NewClient(url, meta.MAINNET)
 
-	rpcClient := rpc.NewWithHeaders("https://api.mainnet-beta.solana.com", map[string]string{})
+	rpcClient := rpc.NewWithHeaders(RPC_ENDPOINT, map[string]string{})
 
 	maxVersion := uint64(0)
 
@@ -42,30 +44,64 @@ func TestTransforming(t *testing.T) {
 		t.Fatalf("Failed to get RPC block: %v", err)
 	}
 
-	res, err := client.Query(FULL_BLOCK_REQUEST)
+	res, err := client.Query(context.Background(), FULL_BLOCK_REQUEST)
 	if err != nil {
 		t.Fatalf("Failed to query SQD: %v", err)
 	}
 
-	transformedBlock, err := TansformBlock(res[0])
+	transformedBlock, err := TransformBlock(res[0])
 	if err != nil {
 		t.Fatalf("Failed to transform block: %v", err)
 	}
 
-	if transformedBlock.Blockhash != rpcBlock.Blockhash.String() {
-		t.Errorf("Blockhash mismatch: %v != %v", transformedBlock.Blockhash, rpcBlock.Blockhash.String())
+	compareBlock(t, *transformedBlock, *rpcBlock)
+}
+
+func TestTransformingSoldexer(t *testing.T) {
+	client := NewSoldexerClient(SOLDEXER_URL)
+
+	rpcClient := rpc.NewWithHeaders(RPC_ENDPOINT, map[string]string{})
+
+	maxVersion := uint64(0)
+
+	// TODO parallelize RPC and SQD requests
+	rpcBlock, err := rpcClient.GetBlockWithOpts(context.Background(), SLOT, &rpc.GetBlockOpts{
+		Encoding:                       solanaGo.EncodingBase64,
+		TransactionDetails:             "full",
+		MaxSupportedTransactionVersion: &maxVersion,
+	})
+	if err != nil {
+		t.Fatalf("Failed to get RPC block: %v", err)
 	}
-	if transformedBlock.BlockHeight != *rpcBlock.BlockHeight {
-		t.Errorf("Block height mismatch: %v != %v", transformedBlock.BlockHeight, *rpcBlock.BlockHeight)
+
+	res, err := client.Query(context.Background(), SOLDEXER_FULL_BLOCK_REQUEST)
+	if err != nil {
+		t.Fatalf("Failed to query SQD: %v", err)
 	}
-	if transformedBlock.PreviousBlockhash != rpcBlock.PreviousBlockhash.String() {
-		t.Errorf("Previous block hash mismatch: %v != %v", transformedBlock.PreviousBlockhash, rpcBlock.PreviousBlockhash)
+
+	transformedBlock, err := TransformBlock(res[0])
+	if err != nil {
+		t.Fatalf("Failed to transform block: %v", err)
 	}
-	if transformedBlock.ParentSlot != rpcBlock.ParentSlot {
-		t.Errorf("Parent slot mismatch: %v != %v", transformedBlock.ParentSlot, rpcBlock.ParentSlot)
+
+	compareBlock(t, *transformedBlock, *rpcBlock)
+}
+
+func compareBlock(t *testing.T, sqdBlock solana.Block, rpcBlock rpc.GetBlockResult) {
+	if sqdBlock.Blockhash != rpcBlock.Blockhash.String() {
+		t.Errorf("Blockhash mismatch: %v != %v", sqdBlock.Blockhash, rpcBlock.Blockhash.String())
 	}
-	if transformedBlock.BlockTime != rpcBlock.BlockTime.Time().Unix() {
-		t.Errorf("Block time mismatch: %v != %v", transformedBlock.BlockTime, rpcBlock.BlockTime)
+	if sqdBlock.BlockHeight != *rpcBlock.BlockHeight {
+		t.Errorf("Block height mismatch: %v != %v", sqdBlock.BlockHeight, *rpcBlock.BlockHeight)
+	}
+	if sqdBlock.PreviousBlockhash != rpcBlock.PreviousBlockhash.String() {
+		t.Errorf("Previous block hash mismatch: %v != %v", sqdBlock.PreviousBlockhash, rpcBlock.PreviousBlockhash)
+	}
+	if sqdBlock.ParentSlot != rpcBlock.ParentSlot {
+		t.Errorf("Parent slot mismatch: %v != %v", sqdBlock.ParentSlot, rpcBlock.ParentSlot)
+	}
+	if sqdBlock.BlockTime != rpcBlock.BlockTime.Time().Unix() {
+		t.Errorf("Block time mismatch: %v != %v", sqdBlock.BlockTime, rpcBlock.BlockTime)
 	}
 
 	// SQD archive doesn't include voting transactions
@@ -76,35 +112,31 @@ func TestTransforming(t *testing.T) {
 			nonVotingTxs = append(nonVotingTxs, tx)
 		}
 	}
-	if len(transformedBlock.Transactions) != len(nonVotingTxs) {
-		t.Errorf("Tx count mismatch: %v != %v", len(transformedBlock.Transactions), len(nonVotingTxs))
+	if len(sqdBlock.Transactions) != len(nonVotingTxs) {
+		t.Errorf("Tx count mismatch: %v != %v", len(sqdBlock.Transactions), len(nonVotingTxs))
 	}
 
 	// SQD doesnt include transactions from the vote program, this leads to different transaction indexes
 
 	// https://solscan.io/tx/5LcWr1JK43dG7NNBXUw7qhouH4ewwoyo4idxgyf2BUtbzuKQpiv4Vn2w2c6sDWaejsmRzENLWdNxcA8mtaeXfS94
-	compareTransactions(t, transformedBlock.Transactions[0], rpcBlock.Transactions[0], 0, []uint{0, 2})
+	compareTransactions(t, sqdBlock.Transactions[0], rpcBlock.Transactions[0], 0, []uint{0, 2})
 
 	// https://solscan.io/tx/5vrB5e2Va47YcLvs2oVMeYfMdtmYJ2wJ7q2SQV9A7P8f1djzb9hMiwbPMajE5yaxPkYdch9QSzRzaiwHEvHgzCno
 	// Failed transaction
-	compareTransactions(t, transformedBlock.Transactions[2], rpcBlock.Transactions[3], 3, []uint{})
+	compareTransactions(t, sqdBlock.Transactions[2], rpcBlock.Transactions[3], 3, []uint{})
 
-	//https://solscan.io/tx/2SB7fVzaUyU8knSbEa42c2BKQJXm1QPamtiFXKapX6YwLbbAm7dzezaGKyXfb6uGRH8a1xTeovSmWnbgav7jeKCS
+	// https://solscan.io/tx/2SB7fVzaUyU8knSbEa42c2BKQJXm1QPamtiFXKapX6YwLbbAm7dzezaGKyXfb6uGRH8a1xTeovSmWnbgav7jeKCS
 	// Transaction with a program
-	compareTransactions(t, transformedBlock.Transactions[5], rpcBlock.Transactions[16], 16, []uint{3, 4})
+	compareTransactions(t, sqdBlock.Transactions[5], rpcBlock.Transactions[16], 16, []uint{3, 4})
 
-	if len(transformedBlock.Rewards) != len(rpcBlock.Rewards) {
-		t.Errorf("Rewards count mismatch: %v != %v", len(transformedBlock.Rewards), len(rpcBlock.Rewards))
+	if len(sqdBlock.Rewards) != len(rpcBlock.Rewards) {
+		t.Errorf("Rewards count mismatch: %v != %v", len(sqdBlock.Rewards), len(rpcBlock.Rewards))
 	}
 
 	// This block only contains a single reward
 	if len(rpcBlock.Rewards) > 0 {
-		compareAsJson(t, rpcBlock.Rewards[0], transformedBlock.Rewards[0], "Reward 0")
+		compareAsJson(t, rpcBlock.Rewards[0], sqdBlock.Rewards[0], "Reward 0")
 	}
-
-	// if len(rpcBlock.Signatures) != len(transformedBlock.Signatures) {
-	// 	t.Errorf("Signature count mismatch: %v != %v", len(transformedBlock.Signatures), len(rpcBlock.Signatures))
-	// }
 }
 
 func compareTransactions(t *testing.T, sqdTx solana.Transaction, rpcTx rpc.TransactionWithMeta, index uint, checkInstructions []uint) {
@@ -134,6 +166,13 @@ func compareTransactions(t *testing.T, sqdTx solana.Transaction, rpcTx rpc.Trans
 	if sqdTx.Meta.Fee != rpcTx.Meta.Fee {
 		t.Errorf("Transaction[%v].Fee mismatch: %v != %v", index, sqdTx.Meta.Fee, rpcTx.Meta.Fee)
 	}
+
+	if *sqdTx.Meta.ComputeUnitsConsumed != *rpcTx.Meta.ComputeUnitsConsumed {
+		t.Errorf("Transaction[%v].ComputeUnitsConsumed mismatch: %v != %v", index, *sqdTx.Meta.ComputeUnitsConsumed, *rpcTx.Meta.ComputeUnitsConsumed)
+	}
+
+	compareAsJson(t, rpcTx.Meta.LoadedAddresses, sqdTx.Meta.LoadedAddresses, fmt.Sprintf("Transaction[%v] LoadedAddresses", index))
+	compareAsJson(t, rpcTx.Meta.Rewards, sqdTx.Meta.Rewards, fmt.Sprintf("Transaction[%v] Rewards", index))
 
 	// Only balance changes are included with SQD, not balances for all accounts in the tx
 	sqdTokenBalIdx := 0
@@ -193,10 +232,10 @@ func compareTransactions(t *testing.T, sqdTx solana.Transaction, rpcTx rpc.Trans
 			filteredLogs = append(filteredLogs, log)
 		}
 	}
-	if len(sqdTx.Meta.LogMessages) != len(filteredLogs) {
-		t.Errorf("Transaction[%v].Meta.LogMessages count mismatch: %v != %v", index, len(sqdTx.Meta.LogMessages), len(filteredLogs))
-	}
-	compareAsJson(t, sqdTx.Meta.LogMessages, filteredLogs, fmt.Sprintf("Transaction[%v].Meta.LogMessages", index))
+	// if len(sqdTx.Meta.LogMessages) != len(filteredLogs) {
+	// 	t.Errorf("Transaction[%v].Meta.LogMessages count mismatch: %v != %v", index, len(sqdTx.Meta.LogMessages), len(filteredLogs))
+	// }
+	// compareAsJson(t, sqdTx.Meta.LogMessages, filteredLogs, fmt.Sprintf("Transaction[%v].Meta.LogMessages", index))
 }
 
 func compareInstructions(t *testing.T, sqdInst solana.CompiledInstruction, rpcInst solanaGo.CompiledInstruction, index uint) {

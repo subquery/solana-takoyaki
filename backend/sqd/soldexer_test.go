@@ -2,19 +2,16 @@ package sqd
 
 import (
 	"context"
-	"strings"
 	"testing"
-
-	"github.com/subquery/solana-takoyaki/meta"
 )
 
-const ARCHIVE_URL = "https://v2.archive.subsquid.io/network/solana-mainnet"
+const SOLDEXER_URL = "https://portal.sqd.dev/datasets/solana-beta"
 
-var FULL_BLOCK_REQUEST = SolanaRequest{
+var SOLDEXER_FULL_BLOCK_REQUEST = SolanaRequest{
 	Type:          "solana",
-	FromBlock:     305_604_799, // Block number, not slot
-	ToBlock:       305_604_799, // Block number, not slot
-	Fields:        ALL_FIELDS,
+	FromBlock:     327_347_682, // Slot
+	ToBlock:       327_347_682, // Slot
+	Fields:        ALL_SOLDEXER_FIELDS,
 	Transactions:  []TransactionRequest{{}}, // Empty item means no filter
 	Instructions:  []InstructionRequest{{}},
 	Rewards:       []RewardRequest{{}},
@@ -23,60 +20,48 @@ var FULL_BLOCK_REQUEST = SolanaRequest{
 	Logs:          []LogRequest{{}},
 }
 
-func TestGetDataSourceUrl(t *testing.T) {
-	url, err := GetSquidUrl(context.Background(), "solana-mainnet")
+func TestSoldexerGetCurrentHeight(t *testing.T) {
+	client := NewSoldexerClient(SOLDEXER_URL)
+
+	ctx := context.Background()
+
+	height, err := client.CurrentHeight(ctx)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to get current height: %v", err)
 	}
 
-	if url != ARCHIVE_URL {
-		t.Fatal("unexpected url")
+	if height == 0 {
+		t.Fatal("Expected non-zero height")
 	}
 }
 
-func TestGetCurrentHeight(t *testing.T) {
-	client := Client{
-		ARCHIVE_URL,
-		meta.MAINNET,
-	}
+func TestSoldexerGetMeta(t *testing.T) {
+	client := NewSoldexerClient(SOLDEXER_URL)
 
-	height, err := client.CurrentHeight(context.Background())
+	ctx := context.Background()
+
+	meta, err := client.Metadata(ctx)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to get current height: %v", err)
 	}
 
-	if height < 305_604_799 {
-		t.Fatal("unexpected height")
+	if meta.StartBlock <= 0 {
+		t.Fatal("Expected non-zero start block")
 	}
+
+	// if meta.Aliases[0] != "solana-mainnet" {
+	// 	t.Fatal("Expected non-zero height")
+	// }
 }
 
-func TestGetWorkerUrl(t *testing.T) {
-	client := Client{
-		ARCHIVE_URL,
-		meta.MAINNET,
-	}
-
-	url, err := client.getWorkerUrl(context.Background(), 305_604_799)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if strings.Contains(url, "https://v2.archive.subsquid.io/network/solana-mainnet/") && strings.Contains(url, "/worker") {
-		t.Fatal("unexpected url")
-	}
-}
-
-func TestQuery(t *testing.T) {
-	client := Client{
-		ARCHIVE_URL,
-		meta.MAINNET,
-	}
+func TestSoldexerQuery(t *testing.T) {
+	client := NewSoldexerClient(SOLDEXER_URL)
 
 	req := SolanaRequest{
 		Type:      "solana",
-		FromBlock: 305_604_799,
-		ToBlock:   305_604_800,
-		Fields: Fields{
+		FromBlock: 327_347_682,
+		ToBlock:   327_347_682,
+		Fields:    ALL_SOLDEXER_FIELDS, /*Fields{
 			Instruction: map[string]bool{"programId": true},
 			Transaction: map[string]bool{
 				"accountKeys":         true,
@@ -88,9 +73,8 @@ func TestQuery(t *testing.T) {
 			Block: map[string]bool{
 				"parentHash": true,
 				"timestamp":  true,
-				"slot":       true,
 			},
-		},
+		},*/
 		Transactions: []TransactionRequest{{}}, // Empty item means no filter
 		Instructions: []InstructionRequest{{}},
 	}

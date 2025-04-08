@@ -1,13 +1,14 @@
 package main
 
 import (
+	// "context"
 	"flag"
 	"fmt"
 	"net/http"
 
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/subquery/solana-takoyaki/api"
-	"github.com/subquery/solana-takoyaki/backend/sqd"
+	// "github.com/subquery/solana-takoyaki/backend/sqd"
 	"github.com/subquery/solana-takoyaki/meta"
 )
 
@@ -18,11 +19,13 @@ func main() {
 
 	flag.Parse()
 
-	sqdUrl, err := sqd.GetSquidUrl("solana-mainnet")
-	if err != nil {
-		fmt.Printf("Failed to get SQD url: %v", err)
-		panic(1)
-	}
+	// sqdUrl, err := sqd.GetSquidUrl(context.Background(), "solana-mainnet")
+	// if err != nil {
+	// 	fmt.Printf("Failed to get SQD url: %v", err)
+	// 	panic(1)
+	// }
+
+	sqdUrl := "https://portal.sqd.dev/datasets/solana-beta"
 
 	subqlApi, err := api.NewSubqlApiService(meta.MAINNET, sqdUrl)
 	if err != nil {

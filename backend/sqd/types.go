@@ -1,11 +1,18 @@
 package sqd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/subquery/solana-takoyaki/utils"
 )
+
+type NetworkMeta struct {
+	GenesisHash string
+	ChainId     string
+	StartBlock  uint
+}
 
 /* Spec can be found here https://docs.sqd.ai/solana-indexing/network-api/solana-api/*/
 
@@ -59,14 +66,10 @@ type TransactionRequest struct {
 	FeePayer []string `json:"feePayer,omitempty"`
 
 	/* Filed Selection */
-	Instructions bool `json:"instructions,omitempty"`
-	Logs         bool `json:"logs,omitempty"`
-}
-
-type TransactionResponse struct {
-	Transaction  transaction   `json:"transaction"`
-	Instructions []instruction `json:"instructions"`
-	Logs         []logMessage  `json:"logs"`
+	Instructions  bool `json:"instructions,omitempty"`
+	Logs          bool `json:"logs,omitempty"`
+	Balances      bool `json:"balances,omitempty"`
+	TokenBalances bool `json:"tokenBalances,omitempty"`
 }
 
 type InstructionRequest struct {
@@ -91,17 +94,30 @@ type InstructionRequest struct {
 
 	/* Field Selection */
 	Transaction              bool `json:"transaction,omitempty"`
-	TransactionTokenBalances bool `json:"transactionTokenbalances,omitempty"`
-	Logs                     bool `json:"logs,omitempty"`
+	TransactionBalances      bool `json:"transactionBalances,omitempty"`
+	TransactionTokenBalances bool `json:"transactionTokenBalances,omitempty"`
+	TransactionInstructions  bool `json:"transactionInstructions,omitempty"`
 	InnerInstructions        bool `json:"innerInstructions,omitempty"`
+	Logs                     bool `json:"logs,omitempty"`
 }
 
-type InstructionResponse struct {
-	Instruction              instruction    `json:"instruction"`
-	Transaction              *transaction   `json:"transaction"`
-	TransactionTokenBalances []tokenBalance `json:"transactionTokenBalances"`
-	Logs                     []logMessage   `json:"logs"`
-	InnerInstructions        []instruction  `json:"innerInstructions"`
+func (ir *InstructionRequest) SetAccounts(idx int, accounts []string) error {
+
+	accountFields := [][]string{
+		ir.A0, ir.A1, ir.A2, ir.A3, ir.A4,
+		ir.A5, ir.A6, ir.A7, ir.A8, ir.A9,
+	}
+
+	if idx < 0 {
+		return fmt.Errorf("Account index must be >= 0")
+	}
+
+	if idx >= len(accountFields) {
+		return fmt.Errorf("Account filter length is limited to %v", len(accountFields))
+	}
+
+	accountFields[idx] = accounts
+	return nil
 }
 
 type LogRequest struct {
@@ -112,12 +128,6 @@ type LogRequest struct {
 	/* Field Selection */
 	Transaction bool `json:"transaction,omitempty"`
 	Instruction bool `json:"instruction,omitempty"`
-}
-
-type LogResponse struct {
-	Log         logMessage   `json:"log"`
-	Transaction *transaction `json:"transaction"`
-	Instruction *instruction `json:"instruction"`
 }
 
 type RewardRequest struct {
@@ -178,7 +188,7 @@ type transaction struct {
 	NumReadonlyUnsignedAccounts uint                   `json:"numReadonlyUnsignedAccounts"`
 	NumRequiredSignatures       uint                   `json:"numRequiredSignatures"`
 	RecentBlockhash             string                 `json:"recentBlockhash"`
-	ComputeUnitsConsumed        uint64                 `json:"computeUnitsConsumed"`
+	ComputeUnitsConsumed        string                 `json:"computeUnitsConsumed"`
 	Fee                         string                 `json:"fee"`
 	FeePayer                    string                 `json:"feePayer"`        // Undocumented
 	LoadedAddresses             loadedAddresses        `json:"loadedAddresses"` // request the whole struct with loadedAddresses: true
@@ -247,13 +257,53 @@ type reward struct {
 type blockHeader struct {
 	// independent of field selectors
 	Hash       string `json:"hash"`
-	Height     uint64 `json:"number"` // TODO needs parsing
+	Height     uint64 `json:"number"`
 	ParentHash string `json:"parentHash"`
 
 	// can be disabled with field selectors
 	Slot       uint64 `json:"slot"`
-	ParentSlot uint64 `json:"parentSlot"` // TODO needs parsing
+	ParentSlot uint64 `json:"parentSlot"`
 	Timestamp  int64  `json:"timestamp"`
+}
+
+func (b *blockHeader) UnmarshalJSON(data []byte) error {
+	type Alias blockHeader
+
+	type rawHeader struct {
+		Alias
+		Slot         *uint64 `json:"slot"`
+		ParentSlot   *uint64 `json:"parentSlot"`
+		Height       *uint64 `json:"height"`
+		Number       *uint64 `json:"number"`
+		ParentNumber *uint64 `json:"parentNumber"`
+	}
+
+	var raw rawHeader
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	b.Hash = raw.Hash
+	b.ParentHash = raw.ParentHash
+	b.Timestamp = raw.Timestamp
+
+	// Legacy archive uses slot, parentSlot while soldexer uses number and parent number
+	// They also mix number and height
+	if raw.Slot != nil || raw.ParentSlot != nil {
+		b.Height = *raw.Number
+		b.Slot = *raw.Slot
+		if raw.ParentSlot != nil {
+			b.ParentSlot = *raw.ParentSlot
+		}
+	} else {
+		b.Height = *raw.Height
+		b.Slot = *raw.Number
+		if raw.ParentNumber != nil {
+			b.ParentSlot = *raw.ParentNumber
+		}
+	}
+
+	return nil
 }
 
 type tokenBalance struct {

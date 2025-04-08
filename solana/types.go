@@ -137,7 +137,8 @@ type TransactionMeta struct {
 
 	// Array of string log messages or omitted if log message
 	// recording was not yet enabled during this transaction
-	LogMessages []string `json:"logMessages"`
+	// LogMessages []string `json:"logMessages"`
+	Logs []Log `json:"logs"`
 
 	// DEPRECATED: Transaction status.
 	// Status DeprecatedTransactionMetaStatus `json:"status"`
@@ -149,6 +150,13 @@ type TransactionMeta struct {
 	ReturnData *ReturnData `json:"returnData,omitempty"`
 
 	ComputeUnitsConsumed *uint64 `json:"computeUnitsConsumed"`
+}
+
+type Log struct {
+	Message   string `json:"message"`
+	ProgramId string `json:"programId"`
+	LogIndex  uint64 `json:"logIndex"`
+	Kind      string `json:"kind"` // 'log' | 'data' | 'other'
 }
 
 type BlockReward struct {
@@ -231,7 +239,7 @@ type UiTokenAmount struct {
 }
 
 type LoadedAddresses struct {
-	ReadOnly []string `json:"readonly"`
+	Readonly []string `json:"readonly"`
 	Writable []string `json:"writable"`
 }
 

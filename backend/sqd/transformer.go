@@ -10,7 +10,7 @@ import (
 	"github.com/subquery/solana-takoyaki/solana"
 )
 
-func TansformBlock(sqdBlock SolanaBlockResponse) (out *solana.Block, err error) {
+func TransformBlock(sqdBlock SolanaBlockResponse) (out *solana.Block, err error) {
 
 	out = &solana.Block{
 		BlockHeight:       sqdBlock.Header.Height,
@@ -48,6 +48,15 @@ func TansformBlock(sqdBlock SolanaBlockResponse) (out *solana.Block, err error) 
 		out.Transactions = []solana.Transaction{}
 	}
 	for _, tx := range sqdBlock.Transactions {
+		inner := innerInstructions[tx.TransactionIndex]
+		if inner == nil {
+			inner = []solana.InnerInstruction{}
+		}
+		txLogs := logs[tx.TransactionIndex]
+		if txLogs == nil {
+			txLogs = []solana.Log{}
+		}
+
 		solanaTx, err := TransformTransaction(
 			tx,
 			sqdBlock.Header,
@@ -56,8 +65,8 @@ func TansformBlock(sqdBlock SolanaBlockResponse) (out *solana.Block, err error) 
 			preTokenBalances[tx.TransactionIndex],
 			postTokenBalances[tx.TransactionIndex],
 			instructions[tx.TransactionIndex],
-			innerInstructions[tx.TransactionIndex],
-			logs[tx.TransactionIndex],
+			inner,
+			txLogs,
 		)
 		if err != nil {
 			return nil, err
@@ -95,9 +104,14 @@ func TransformTransaction(
 	postTokenBalance []solana.TokenBalance,
 	instructions []solana.CompiledInstruction,
 	innerInstructions []solana.InnerInstruction,
-	logs []string,
+	logs []solana.Log,
 ) (out *solana.Transaction, err error) {
 	fee, err := strconv.ParseUint(in.Fee, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	computeUnitsConsumed, err := strconv.ParseUint(in.ComputeUnitsConsumed, 10, 64)
 	if err != nil {
 		return nil, err
 	}
@@ -114,14 +128,20 @@ func TransformTransaction(
 		Slot:      header.Slot,
 		BlockTime: header.Timestamp,
 		Meta: &solana.TransactionMeta{
-			Err:               in.Err,
-			Fee:               fee,
-			PreBalances:       preBalances,  // Incomplete data, only included balances that change
-			PostBalances:      postBalances, // Incomplete data, only included balances that change
-			InnerInstructions: innerInstructions,
-			PreTokenBalances:  preTokenBalance,
-			PostTokenBalances: postTokenBalance,
-			LogMessages:       logs, // Missing program invoke, success and consumed compute units logs
+			Err:                  in.Err,
+			Fee:                  fee,
+			PreBalances:          preBalances,  // Incomplete data, only included balances that change
+			PostBalances:         postBalances, // Incomplete data, only included balances that change
+			InnerInstructions:    innerInstructions,
+			PreTokenBalances:     preTokenBalance,
+			PostTokenBalances:    postTokenBalance,
+			Logs:                 logs, // Missing program invoke, success and consumed compute units logs
+			ComputeUnitsConsumed: &computeUnitsConsumed,
+			LoadedAddresses: solana.LoadedAddresses{
+				Readonly: in.LoadedAddresses.Readonly,
+				Writable: in.LoadedAddresses.Writable,
+			},
+			Rewards: []solana.BlockReward{}, // TODO can we get this from the solana request?
 		},
 		Transaction: &solana.JSONTransaction{
 			Signatures: in.Signatures,
@@ -259,6 +279,15 @@ func TransformTokenBalance(in tokenBalance, tx transaction) (pre *solana.TokenBa
 	return pre, post, err
 }
 
+func TransformLog(log logMessage) (out solana.Log) {
+	return solana.Log{
+		Message:   log.Message,
+		ProgramId: log.ProgramId,
+		LogIndex:  uint64(log.LogIndex),
+		Kind:      log.Kind,
+	}
+}
+
 func shiftDecimalPlaces(input int64, places int) float64 {
 	return float64(input) / math.Pow10(places)
 }
@@ -390,13 +419,13 @@ func groupTokenBalances(in []tokenBalance, txs []transaction) (preTokenBalances,
 	return preTokenBalances, postTokenBalances, nil
 }
 
-func groupLogs(in []logMessage) (out map[uint][]string, err error) {
-	out = map[uint][]string{}
+func groupLogs(in []logMessage) (out map[uint][]solana.Log, err error) {
+	out = map[uint][]solana.Log{}
 	for _, log := range in {
 		if out[log.TransactionIndex] == nil {
-			out[log.TransactionIndex] = []string{}
+			out[log.TransactionIndex] = []solana.Log{}
 		}
-		out[log.TransactionIndex] = append(out[log.TransactionIndex], log.String())
+		out[log.TransactionIndex] = append(out[log.TransactionIndex], TransformLog(log))
 	}
 
 	return out, nil
