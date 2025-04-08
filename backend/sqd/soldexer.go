@@ -36,7 +36,7 @@ var ALL_SOLDEXER_FIELDS = Fields{
 		"numRequiredSignatures":       true,
 		"addressTableLookups":         true,
 		"computeUnitsConsumed":        true,
-		// "recentBlockhash":             true, // Doesn't work, RPC returns an error, possibly a typeo on the SQD query service: recentBlockhash should be recentBlockHash
+		// "recentBlockHash":             true, // Waiting on fix from SQD
 	},
 	Log: map[string]bool{
 		"transactionIndex":   true,
@@ -219,9 +219,10 @@ func (c *SoldexerClient) Query(ctx context.Context, solReq SolanaRequest) ([]Sol
 	if res.StatusCode != http.StatusOK {
 		rawRes, err := io.ReadAll(res.Body)
 		if err != nil {
-			slog.Error("failed to read query body", "error", err)
+			slog.Error("failed to read query body", "status", res.Status, "error", err)
 			return nil, fmt.Errorf("Bad response code: %s\n%v", res.Status, "Failed to read body")
 		}
+		slog.Error("Request failed", "status", res.Status)
 		return nil, fmt.Errorf("Bad response code: %s\n%v", res.Status, string(rawRes))
 	}
 

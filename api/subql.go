@@ -49,12 +49,16 @@ type LogFilterQuery struct {
 }
 
 type BlockFilter struct {
+	Transactions []TxFilterQuery
+	Instructions []InstFilterQuery
+	Logs         []LogFilterQuery
+}
+
+type BlockRequest struct {
 	FromBlock     *big.Int
 	ToBlock       *big.Int
 	Limit         *big.Int
-	Transactions  []TxFilterQuery
-	Instructions  []InstFilterQuery
-	Logs          []LogFilterQuery
+	BlockFilter   *BlockFilter
 	FieldSelector *FieldSelector
 }
 
@@ -110,7 +114,7 @@ func (s *SubqlApiService) FilterBlocksCapabilities(ctx context.Context) (*Capabi
 	return capabilities, nil
 }
 
-func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockFilter BlockFilter) (*BlockResult, error) {
+func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockRequest) (*BlockResult, error) {
 	slog.Debug("Filter Blocks")
 
 	meta, err := s.sqdClient.Metadata(ctx)
@@ -126,8 +130,8 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockFilter BlockFil
 	// This is done because when filtering instructions we aren't able to get all the logs for the transaction, only the instruction
 	req := sqd.SolanaRequest{
 		Type:      "solana",
-		FromBlock: uint(blockFilter.FromBlock.Uint64()),
-		ToBlock:   uint(blockFilter.ToBlock.Uint64()),
+		FromBlock: uint(blockReq.FromBlock.Uint64()),
+		ToBlock:   uint(blockReq.ToBlock.Uint64()),
 		Fields: sqd.Fields{
 			Block: map[string]bool{"number": true, "height": true},
 		},
@@ -140,12 +144,13 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockFilter BlockFil
 		Logs:          []sqd.LogRequest{},
 	}
 
-	err = ApplyFiltersToSQDRequest(&req, blockFilter)
+	err = ApplyFiltersToSQDRequest(&req, *blockReq.BlockFilter)
 	if err != nil {
 		slog.Error("Failed to apply filters", "error", err)
 		return nil, err
 	}
 
+	// This response always returns the first and last block in the range even if there is no match as a way to indicate the blocks searched.
 	res, err := s.sqdClient.Query(ctx, req)
 	if err != nil {
 		slog.Error("Failed to run filter query", "error", err)
@@ -200,10 +205,10 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockFilter BlockFil
 		return nil, err
 	}
 
-	// TODO block range
+	// This response always returns the first and last block in the range even if there is no match as a way to indicate the blocks searched.
 	blockResult.BlockRange = [2]*big.Int{
-		blockFilter.FromBlock,
-		blockFilter.ToBlock,
+		big.NewInt(int64(res[0].Header.Slot)),
+		big.NewInt(int64(res[len(res)-1].Header.Slot)),
 	}
 	blockResult.Blocks = blocks
 
@@ -217,8 +222,8 @@ func ApplyFiltersToSQDRequest(req *sqd.SolanaRequest, blockFilter BlockFilter) e
 			req.Transactions = append(req.Transactions, sqd.TransactionRequest{
 				FeePayer: tx.SignerAccountKeys,
 
-				Instructions: true,
-				Logs:         true,
+				// Instructions: true,
+				// Logs:         true,
 			})
 		}
 	}
@@ -231,12 +236,12 @@ func ApplyFiltersToSQDRequest(req *sqd.SolanaRequest, blockFilter BlockFilter) e
 
 				IsCommitted: inst.IsCommitted,
 
-				Transaction:              true,
-				TransactionBalances:      true,
-				TransactionTokenBalances: true,
-				TransactionInstructions:  true,
-				Logs:                     true,
-				InnerInstructions:        true,
+				// Transaction:              true,
+				// TransactionBalances:      true,
+				// TransactionTokenBalances: true,
+				// TransactionInstructions:  true,
+				// Logs:                     true,
+				// InnerInstructions:        true,
 			}
 
 			for i, a := range inst.Accounts {
@@ -253,8 +258,8 @@ func ApplyFiltersToSQDRequest(req *sqd.SolanaRequest, blockFilter BlockFilter) e
 			req.Logs = append(req.Logs, sqd.LogRequest{
 				ProgramId: log.ProgramIds,
 
-				Transaction: true,
-				Instruction: true,
+				// Transaction: true,
+				// Instruction: true,
 			})
 		}
 	}
@@ -262,15 +267,13 @@ func ApplyFiltersToSQDRequest(req *sqd.SolanaRequest, blockFilter BlockFilter) e
 	return nil
 }
 
-func (b *BlockFilter) UnmarshalJSON(data []byte) error {
+func (b *BlockRequest) UnmarshalJSON(data []byte) error {
 	type rawBlockFilter struct {
-		FromBlock     *hexutil.Big      `json:"fromBlock"`
-		ToBlock       *hexutil.Big      `json:"toBlock"`
-		Limit         *hexutil.Big      `json:"limit"`
-		Transactions  []TxFilterQuery   `json:"transactions"`
-		Instructions  []InstFilterQuery `json:"instructions"`
-		Logs          []LogFilterQuery  `json:"logs"`
-		FieldSelector *FieldSelector    `json:"fieldSelector"`
+		FromBlock     *hexutil.Big   `json:"fromBlock"`
+		ToBlock       *hexutil.Big   `json:"toBlock"`
+		Limit         *hexutil.Big   `json:"limit"`
+		BlockFilter   *BlockFilter   `json:"blockFilter"`
+		FieldSelector *FieldSelector `json:"fieldSelector"`
 	}
 
 	var raw rawBlockFilter
@@ -287,9 +290,7 @@ func (b *BlockFilter) UnmarshalJSON(data []byte) error {
 	if raw.Limit != nil {
 		b.Limit = (*big.Int)(raw.Limit)
 	}
-	b.Transactions = raw.Transactions
-	b.Instructions = raw.Instructions
-	b.Logs = raw.Logs
+	b.BlockFilter = raw.BlockFilter
 	b.FieldSelector = raw.FieldSelector
 
 	return nil

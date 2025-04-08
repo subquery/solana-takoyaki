@@ -50,7 +50,7 @@ var ALL_FIELDS = Fields{
 		"numReadonlyUnsignedAccounts": true,
 		"numRequiredSignatures":       true,
 		"addressTableLookups":         true,
-		// "recentBlockhash":             true, // Doesn't work, RPC returns an error, possibly a typeo on the SQD query service: recentBlockhash should be recentBlockHash
+		// "recentBlockHash":             true, // Doesn't work, RPC returns an error, possibly a typeo on the SQD query service: recentBlockhash should be recentBlockHash
 	},
 	Log: map[string]bool{
 		"kind":      true,
