@@ -6,6 +6,7 @@ import (
 
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/subquery/solana-takoyaki/utils"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 type NetworkMeta struct {
@@ -90,6 +91,13 @@ type InstructionRequest struct {
 	A7          []string `json:"a7,omitempty"`
 	A8          []string `json:"a8,omitempty"`
 	A9          []string `json:"a9,omitempty"`
+	// Legacy archive only supported the first 10
+	A10          []string `json:"a10,omitempty"`
+	A11          []string `json:"a11,omitempty"`
+	A12          []string `json:"a12,omitempty"`
+	A13          []string `json:"a13,omitempty"`
+	A14          []string `json:"a14,omitempty"`
+	A15          []string `json:"a15,omitempty"`
 	IsCommitted bool     `json:"isCommitted,omitempty"`
 
 	/* Field Selection */
@@ -103,9 +111,10 @@ type InstructionRequest struct {
 
 func (ir *InstructionRequest) SetAccounts(idx int, accounts []string) error {
 
-	accountFields := [][]string{
-		ir.A0, ir.A1, ir.A2, ir.A3, ir.A4,
-		ir.A5, ir.A6, ir.A7, ir.A8, ir.A9,
+	accountFields := []*[]string{
+		&ir.A0, &ir.A1, &ir.A2, &ir.A3, &ir.A4,
+		&ir.A5, &ir.A6, &ir.A7, &ir.A8, &ir.A9,
+		&ir.A10, &ir.A11, &ir.A12, &ir.A13, &ir.A14, &ir.A15,
 	}
 
 	if idx < 0 {
@@ -116,7 +125,36 @@ func (ir *InstructionRequest) SetAccounts(idx int, accounts []string) error {
 		return fmt.Errorf("Account filter length is limited to %v", len(accountFields))
 	}
 
-	accountFields[idx] = accounts
+	*accountFields[idx] = append(*accountFields[idx], accounts...)
+	return nil
+}
+
+func (ir *InstructionRequest) SetDiscriminators(discriminators []string) error {
+
+	applyDiscriminator := func(d *[]string, val string) {
+		if (d == nil) {
+				d = &[]string{val}
+			} else {
+				*d = append(*d, val)
+			}
+	}
+
+	for _, d := range discriminators {
+		byteLength := len(common.FromHex(d))
+
+		switch byteLength {
+		case 1:
+			applyDiscriminator(&ir.D1, d);
+		case 2:
+			applyDiscriminator(&ir.D2, d);
+		case 4:
+			applyDiscriminator(&ir.D4, d);
+		case 8:
+			applyDiscriminator(&ir.D8, d);
+		default:
+			return fmt.Errorf("Invalid discriminator length: %v. supported lengths: 1, 2, 4, 8 bytes", byteLength)
+		}
+	}
 	return nil
 }
 

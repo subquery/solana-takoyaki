@@ -245,7 +245,15 @@ func ApplyFiltersToSQDRequest(req *sqd.SolanaRequest, blockFilter BlockFilter) e
 			}
 
 			for i, a := range inst.Accounts {
-				instReq.SetAccounts(i, a)
+				err := instReq.SetAccounts(i, a)
+				if err != nil {
+					return err
+				}
+			}
+
+			err := instReq.SetDiscriminators(inst.Discriminators)
+			if err != nil {
+				return err;
 			}
 
 			req.Instructions = append(req.Instructions, instReq)

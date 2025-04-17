@@ -183,9 +183,14 @@ func (c *SoldexerClient) Metadata(ctx context.Context) (*NetworkMeta, error) {
 		return nil, err
 	}
 
+	chainId := metaRes.Dataset
+	if len(metaRes.Aliases) > 0{
+		chainId = metaRes.Aliases[0];
+	}
+
 	meta := &NetworkMeta{
 		StartBlock:  metaRes.StartBlock,
-		ChainId:     metaRes.Aliases[0],
+		ChainId:     chainId,
 		GenesisHash: meta.MAINNET.GenesisHash, // TODO make configurable
 	}
 
