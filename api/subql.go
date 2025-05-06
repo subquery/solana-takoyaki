@@ -41,7 +41,7 @@ type InstFilterQuery struct {
 	ProgramIds     []string   `json:"programIds"`
 	Accounts       [][]string `json:"accounts"`
 	Discriminators []string   `json:"discriminators"`
-	IsCommitted    bool       `json:"isCommitted"`
+	IsCommitted    *bool      `json:"isCommitted"`
 }
 
 type LogFilterQuery struct {
@@ -165,10 +165,16 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockReques
 		return nil, err
 	}
 
+	// TODO parrallelize this with sqdClient.Query
+	currentHeight, err := s.sqdClient.CurrentHeight(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// This response always returns the first and last block in the range even if there is no match as a way to indicate the blocks searched.
 	blockResult.BlockRange = [2]*big.Int{
 		big.NewInt(int64(res[0].Header.Slot)),
-		big.NewInt(int64(res[len(res)-1].Header.Slot)),
+		big.NewInt(int64(currentHeight)),
 	}
 
 	slog.Info("Filter blocks", "num blocks", len(res))

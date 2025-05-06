@@ -100,7 +100,7 @@ type InstructionRequest struct {
 	A13         []string `json:"a13,omitempty"`
 	A14         []string `json:"a14,omitempty"`
 	A15         []string `json:"a15,omitempty"`
-	IsCommitted bool     `json:"isCommitted,omitempty"`
+	IsCommitted *bool    `json:"isCommitted,omitempty"`
 
 	/* Field Selection */
 	Transaction              bool `json:"transaction,omitempty"`
