@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -262,4 +263,16 @@ func IsVoteTx(tx *solanaGo.Transaction) bool {
 		}
 	}
 	return false
+}
+
+func TestShiftDecimalPlacesLeft(t *testing.T) {
+	shifted := shiftDecimalPlacesLeft(*big.NewFloat(101), 1)
+	if big.NewFloat(10.1).Cmp(shifted) != 0 {
+		t.Errorf("Expected 10.1, got %v", shifted)
+	}
+
+	shifted2 := shiftDecimalPlacesLeft(*big.NewFloat(987654321), 5)
+	if big.NewFloat(9876.54321).Cmp(shifted2) != 0 {
+		t.Errorf("Expected 9876.54321, got %v", shifted2)
+	}
 }

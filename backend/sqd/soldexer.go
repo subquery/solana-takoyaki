@@ -184,8 +184,8 @@ func (c *SoldexerClient) Metadata(ctx context.Context) (*NetworkMeta, error) {
 	}
 
 	chainId := metaRes.Dataset
-	if len(metaRes.Aliases) > 0{
-		chainId = metaRes.Aliases[0];
+	if len(metaRes.Aliases) > 0 {
+		chainId = metaRes.Aliases[0]
 	}
 
 	meta := &NetworkMeta{
@@ -199,7 +199,7 @@ func (c *SoldexerClient) Metadata(ctx context.Context) (*NetworkMeta, error) {
 	return meta, nil
 }
 
-func (c *SoldexerClient) Query(ctx context.Context, solReq SolanaRequest) ([]SolanaBlockResponse, error) {
+func (c *SoldexerClient) Query(ctx context.Context, solReq SolanaRequest, limit *int) ([]SolanaBlockResponse, error) {
 	url, err := url.JoinPath(c.baseUrl, "/stream")
 	if err != nil {
 		return nil, err
@@ -210,7 +210,9 @@ func (c *SoldexerClient) Query(ctx context.Context, solReq SolanaRequest) ([]Sol
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(rawReq))
+	cancelCtx, cancelFn := context.WithCancel(ctx)
+
+	req, err := http.NewRequestWithContext(cancelCtx, "POST", url, bytes.NewBuffer(rawReq))
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := http.DefaultClient.Do(req)
@@ -245,6 +247,12 @@ func (c *SoldexerClient) Query(ctx context.Context, solReq SolanaRequest) ([]Sol
 			return nil, err
 		}
 		solanaRes = append(solanaRes, item)
+
+		// Limit reached, cancel the request end return
+		if limit != nil && len(solanaRes) >= *limit {
+			cancelFn()
+			break
+		}
 	}
 
 	return solanaRes, nil

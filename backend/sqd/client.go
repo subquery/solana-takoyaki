@@ -21,7 +21,7 @@ type Client struct {
 type QueryClient interface {
 	Metadata(ctx context.Context) (*NetworkMeta, error)
 	CurrentHeight(ctx context.Context) (uint, error)
-	Query(ctx context.Context, solReq SolanaRequest) ([]SolanaBlockResponse, error)
+	Query(ctx context.Context, solReq SolanaRequest, limit *int) ([]SolanaBlockResponse, error)
 	GetAllFields() Fields
 }
 
@@ -132,7 +132,7 @@ func (c *Client) CurrentHeight(ctx context.Context) (uint, error) {
 	return uint(currentHeight), nil
 }
 
-func (c *Client) Query(ctx context.Context, solReq SolanaRequest) ([]SolanaBlockResponse, error) {
+func (c *Client) Query(ctx context.Context, solReq SolanaRequest, limit *int) ([]SolanaBlockResponse, error) {
 	workerUrl, err := c.getWorkerUrl(ctx, solReq.FromBlock)
 	if err != nil {
 		slog.Error("Failed to get worker url", "error", err)

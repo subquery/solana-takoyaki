@@ -2,7 +2,7 @@ package sqd
 
 import (
 	"fmt"
-	"math"
+	"math/big"
 	"slices"
 	"sort"
 	"strconv"
@@ -224,9 +224,10 @@ func TransformReward(in reward) (*solana.BlockReward, error) {
 
 func TransformTokenBalance(in tokenBalance, tx transaction) (pre *solana.TokenBalance, post *solana.TokenBalance, err error) {
 	parse := func(owner, programId *string, mint, amount string, decimals uint8) (*solana.TokenBalance, error) {
-		amountInt, err := strconv.ParseInt(amount, 10, 64)
-		if err != nil {
-			return nil, err
+
+		amountBF, success := new(big.Float).SetString(amount)
+		if !success {
+			return nil, fmt.Errorf("Unable to parse amount %v", amount)
 		}
 
 		uiTokenAmount := &solana.UiTokenAmount{
@@ -237,9 +238,10 @@ func TransformTokenBalance(in tokenBalance, tx transaction) (pre *solana.TokenBa
 
 		// Values are only set for non-zero amounts
 		if amount != "0" {
-			uiAmount := shiftDecimalPlaces(amountInt, int(decimals))
-			uiTokenAmount.UiAmount = &uiAmount
-			uiTokenAmount.UiAmountString = strconv.FormatFloat(uiAmount, byte('f'), int(decimals), 64)
+			uiAmount := shiftDecimalPlacesLeft(*amountBF, int64(decimals))
+			floatAmount, _ := uiAmount.Float64()
+			uiTokenAmount.UiAmount = &floatAmount
+			uiTokenAmount.UiAmountString = uiAmount.Text(byte('f'), -1)
 		}
 
 		idx, err := findAddressIndex(in.Account, tx)
@@ -288,8 +290,15 @@ func TransformLog(log logMessage) (out solana.Log) {
 	}
 }
 
-func shiftDecimalPlaces(input int64, places int) float64 {
-	return float64(input) / math.Pow10(places)
+func shiftDecimalPlacesLeft(input big.Float, places int64) *big.Float {
+	// Compute 10^places as a *big.Float
+	exp := new(big.Float).SetFloat64(1)
+	ten := big.NewFloat(10)
+
+	for i := int64(0); i < places; i++ {
+		exp.Mul(exp, ten)
+	}
+	return input.Quo(&input, exp)
 }
 
 func groupInstructions(instructions []instruction, txs []transaction) (out map[uint][]solana.CompiledInstruction, inner map[uint][]solana.InnerInstruction, err error) {
@@ -354,6 +363,10 @@ func groupBalances(in []balance, txs []transaction) (preBalances, postBalances m
 			return nil, nil, err
 		}
 
+		if tx == nil {
+			return nil, nil, fmt.Errorf("Unable to find transaction for index %v", txIdx)
+		}
+
 		// Sort the balances by the account index in the transaction
 		slices.SortFunc(txBals, func(i, j balance) int {
 			accountIdxI, _ := findAddressIndex(i.Account, *tx)
@@ -373,7 +386,8 @@ func groupBalances(in []balance, txs []transaction) (preBalances, postBalances m
 
 			preBal, err := strconv.ParseUint(bal.Pre, 10, 64)
 			if err != nil {
-				return nil, nil, fmt.Errorf("Unable to parse pre balance: %v", err)
+				fmt.Println("Transaction", txIdx, tx.Signatures)
+				return nil, nil, fmt.Errorf("Unable to parse pre balance. Err=%v. Value=%v", err, bal)
 			}
 			postBal, err := strconv.ParseUint(bal.Post, 10, 64)
 			if err != nil {

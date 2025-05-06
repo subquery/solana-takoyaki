@@ -114,6 +114,8 @@ func (s *SubqlApiService) FilterBlocksCapabilities(ctx context.Context) (*Capabi
 	return capabilities, nil
 }
 
+const SINGLE_REQUEST = true
+
 func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockRequest) (*BlockResult, error) {
 	slog.Debug("Filter Blocks")
 
@@ -128,13 +130,18 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockReques
 
 	// Create an initial request to get the relevant block numbers that match the filters
 	// This is done because when filtering instructions we aren't able to get all the logs for the transaction, only the instruction
+
+	fields := sqd.Fields{
+		Block: map[string]bool{"number": true, "height": true},
+	}
+	if SINGLE_REQUEST {
+		fields = s.sqdClient.GetAllFields()
+	}
 	req := sqd.SolanaRequest{
 		Type:      "solana",
 		FromBlock: uint(blockReq.FromBlock.Uint64()),
 		ToBlock:   uint(blockReq.ToBlock.Uint64()),
-		Fields: sqd.Fields{
-			Block: map[string]bool{"number": true, "height": true},
-		},
+		Fields:    fields,
 		// Empty item means no filter, these will get updated based on the block filters
 		Transactions:  []sqd.TransactionRequest{},
 		Instructions:  []sqd.InstructionRequest{},
@@ -151,13 +158,35 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockReques
 	}
 
 	// This response always returns the first and last block in the range even if there is no match as a way to indicate the blocks searched.
-	res, err := s.sqdClient.Query(ctx, req)
+	limit := int(blockReq.Limit.Int64())
+	res, err := s.sqdClient.Query(ctx, req, &limit)
 	if err != nil {
 		slog.Error("Failed to run filter query", "error", err)
 		return nil, err
 	}
 
+	// This response always returns the first and last block in the range even if there is no match as a way to indicate the blocks searched.
+	blockResult.BlockRange = [2]*big.Int{
+		big.NewInt(int64(res[0].Header.Slot)),
+		big.NewInt(int64(res[len(res)-1].Header.Slot)),
+	}
+
 	slog.Info("Filter blocks", "num blocks", len(res))
+
+	if SINGLE_REQUEST {
+		for _, block := range res {
+			rpcBlock, err := sqd.TransformBlock(block)
+			if err != nil {
+				slog.Error("Failed to transform block", "error", err, "block num", block.Header.Slot)
+				return nil, err
+			}
+			if rpcBlock == nil {
+				return nil, fmt.Errorf("Block %d is nil", block.Header.Slot)
+			}
+			blockResult.Blocks = append(blockResult.Blocks, rpcBlock)
+		}
+		return blockResult, nil
+	}
 
 	// Fetch all the matching blocks with full content
 	blocks := make([]*solana.Block, len(res))
@@ -180,7 +209,7 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockReques
 				Logs:          []sqd.LogRequest{{}},
 			}
 
-			res, err := s.sqdClient.Query(ctx, req)
+			res, err := s.sqdClient.Query(ctx, req, &limit)
 			if err != nil {
 				errChan <- err
 				return
@@ -205,11 +234,6 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockReques
 		return nil, err
 	}
 
-	// This response always returns the first and last block in the range even if there is no match as a way to indicate the blocks searched.
-	blockResult.BlockRange = [2]*big.Int{
-		big.NewInt(int64(res[0].Header.Slot)),
-		big.NewInt(int64(res[len(res)-1].Header.Slot)),
-	}
 	blockResult.Blocks = blocks
 
 	return blockResult, nil
@@ -222,8 +246,8 @@ func ApplyFiltersToSQDRequest(req *sqd.SolanaRequest, blockFilter BlockFilter) e
 			req.Transactions = append(req.Transactions, sqd.TransactionRequest{
 				FeePayer: tx.SignerAccountKeys,
 
-				// Instructions: true,
-				// Logs:         true,
+				Instructions: true,
+				Logs:         true,
 			})
 		}
 	}
@@ -236,12 +260,12 @@ func ApplyFiltersToSQDRequest(req *sqd.SolanaRequest, blockFilter BlockFilter) e
 
 				IsCommitted: inst.IsCommitted,
 
-				// Transaction:              true,
-				// TransactionBalances:      true,
-				// TransactionTokenBalances: true,
-				// TransactionInstructions:  true,
-				// Logs:                     true,
-				// InnerInstructions:        true,
+				Transaction:              true,
+				TransactionBalances:      true,
+				TransactionTokenBalances: true,
+				TransactionInstructions:  true,
+				Logs:                     true,
+				InnerInstructions:        true,
 			}
 
 			for i, a := range inst.Accounts {
@@ -253,7 +277,7 @@ func ApplyFiltersToSQDRequest(req *sqd.SolanaRequest, blockFilter BlockFilter) e
 
 			err := instReq.SetDiscriminators(inst.Discriminators)
 			if err != nil {
-				return err;
+				return err
 			}
 
 			req.Instructions = append(req.Instructions, instReq)
@@ -266,8 +290,8 @@ func ApplyFiltersToSQDRequest(req *sqd.SolanaRequest, blockFilter BlockFilter) e
 			req.Logs = append(req.Logs, sqd.LogRequest{
 				ProgramId: log.ProgramIds,
 
-				// Transaction: true,
-				// Instruction: true,
+				Transaction: true,
+				Instruction: true,
 			})
 		}
 	}

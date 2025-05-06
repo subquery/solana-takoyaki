@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/subquery/solana-takoyaki/utils"
-	"github.com/ethereum/go-ethereum/common"
 )
 
 type NetworkMeta struct {
@@ -64,7 +64,8 @@ type Fields struct {
 
 type TransactionRequest struct {
 	/* Filters */
-	FeePayer []string `json:"feePayer,omitempty"`
+	FeePayer        []string `json:"feePayer,omitempty"`
+	MentionsAccount []string `json:"mentionsAccount,omitempty"`
 
 	/* Filed Selection */
 	Instructions  bool `json:"instructions,omitempty"`
@@ -75,29 +76,30 @@ type TransactionRequest struct {
 
 type InstructionRequest struct {
 	/* Filters */
-	ProgramId   []string `json:"programId,omitempty"`
-	D1          []string `json:"d1,omitempty"`
-	D2          []string `json:"d2,omitempty"`
-	D3          []string `json:"d3,omitempty"`
-	D4          []string `json:"d4,omitempty"`
-	D8          []string `json:"d8,omitempty"`
-	A0          []string `json:"a0,omitempty"`
-	A1          []string `json:"a1,omitempty"`
-	A2          []string `json:"a2,omitempty"`
-	A3          []string `json:"a3,omitempty"`
-	A4          []string `json:"a4,omitempty"`
-	A5          []string `json:"a5,omitempty"`
-	A6          []string `json:"a6,omitempty"`
-	A7          []string `json:"a7,omitempty"`
-	A8          []string `json:"a8,omitempty"`
-	A9          []string `json:"a9,omitempty"`
+	ProgramId       []string `json:"programId,omitempty"`
+	D1              []string `json:"d1,omitempty"`
+	D2              []string `json:"d2,omitempty"`
+	D3              []string `json:"d3,omitempty"`
+	D4              []string `json:"d4,omitempty"`
+	D8              []string `json:"d8,omitempty"`
+	MentionsAccount []string `json:"mentionsAccount,omitempty"`
+	A0              []string `json:"a0,omitempty"`
+	A1              []string `json:"a1,omitempty"`
+	A2              []string `json:"a2,omitempty"`
+	A3              []string `json:"a3,omitempty"`
+	A4              []string `json:"a4,omitempty"`
+	A5              []string `json:"a5,omitempty"`
+	A6              []string `json:"a6,omitempty"`
+	A7              []string `json:"a7,omitempty"`
+	A8              []string `json:"a8,omitempty"`
+	A9              []string `json:"a9,omitempty"`
 	// Legacy archive only supported the first 10
-	A10          []string `json:"a10,omitempty"`
-	A11          []string `json:"a11,omitempty"`
-	A12          []string `json:"a12,omitempty"`
-	A13          []string `json:"a13,omitempty"`
-	A14          []string `json:"a14,omitempty"`
-	A15          []string `json:"a15,omitempty"`
+	A10         []string `json:"a10,omitempty"`
+	A11         []string `json:"a11,omitempty"`
+	A12         []string `json:"a12,omitempty"`
+	A13         []string `json:"a13,omitempty"`
+	A14         []string `json:"a14,omitempty"`
+	A15         []string `json:"a15,omitempty"`
 	IsCommitted bool     `json:"isCommitted,omitempty"`
 
 	/* Field Selection */
@@ -132,11 +134,11 @@ func (ir *InstructionRequest) SetAccounts(idx int, accounts []string) error {
 func (ir *InstructionRequest) SetDiscriminators(discriminators []string) error {
 
 	applyDiscriminator := func(d *[]string, val string) {
-		if (d == nil) {
-				d = &[]string{val}
-			} else {
-				*d = append(*d, val)
-			}
+		if d == nil {
+			d = &[]string{val}
+		} else {
+			*d = append(*d, val)
+		}
 	}
 
 	for _, d := range discriminators {
@@ -144,13 +146,13 @@ func (ir *InstructionRequest) SetDiscriminators(discriminators []string) error {
 
 		switch byteLength {
 		case 1:
-			applyDiscriminator(&ir.D1, d);
+			applyDiscriminator(&ir.D1, d)
 		case 2:
-			applyDiscriminator(&ir.D2, d);
+			applyDiscriminator(&ir.D2, d)
 		case 4:
-			applyDiscriminator(&ir.D4, d);
+			applyDiscriminator(&ir.D4, d)
 		case 8:
-			applyDiscriminator(&ir.D8, d);
+			applyDiscriminator(&ir.D8, d)
 		default:
 			return fmt.Errorf("Invalid discriminator length: %v. supported lengths: 1, 2, 4, 8 bytes", byteLength)
 		}
