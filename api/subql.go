@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/subquery/solana-takoyaki/backend/sqd"
@@ -72,7 +71,7 @@ type BlockResult struct {
 
 type SubqlApiService struct {
 	// networkMeta meta.NetworkMeta
-	sqdClient sqd.QueryClient
+	sqdClient *sqd.SoldexerClient
 }
 
 func NewSubqlApiService(
@@ -114,8 +113,6 @@ func (s *SubqlApiService) FilterBlocksCapabilities(ctx context.Context) (*Capabi
 	return capabilities, nil
 }
 
-const SINGLE_REQUEST = true
-
 func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockRequest) (*BlockResult, error) {
 	slog.Debug("Filter Blocks")
 
@@ -128,20 +125,11 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockReques
 		GenesisHash: meta.ChainId,
 	}
 
-	// Create an initial request to get the relevant block numbers that match the filters
-	// This is done because when filtering instructions we aren't able to get all the logs for the transaction, only the instruction
-
-	fields := sqd.Fields{
-		Block: map[string]bool{"number": true, "height": true},
-	}
-	if SINGLE_REQUEST {
-		fields = s.sqdClient.GetAllFields()
-	}
 	req := sqd.SolanaRequest{
 		Type:      "solana",
 		FromBlock: uint(blockReq.FromBlock.Uint64()),
 		ToBlock:   uint(blockReq.ToBlock.Uint64()),
-		Fields:    fields,
+		Fields:    s.sqdClient.GetAllFields(),
 		// Empty item means no filter, these will get updated based on the block filters
 		Transactions:  []sqd.TransactionRequest{},
 		Instructions:  []sqd.InstructionRequest{},
@@ -157,91 +145,72 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockReques
 		return nil, err
 	}
 
-	// This response always returns the first and last block in the range even if there is no match as a way to indicate the blocks searched.
-	limit := int(blockReq.Limit.Int64())
-	res, err := s.sqdClient.Query(ctx, req, &limit)
-	if err != nil {
-		slog.Error("Failed to run filter query", "error", err)
-		return nil, err
+	// Create channels to receive results from goroutines
+	type queryResult struct {
+		res    []sqd.SolanaBlockResponse
+		blocks []*solana.Block
+		err    error
+	}
+	type heightResult struct {
+		height uint
+		err    error
 	}
 
-	// TODO parrallelize this with sqdClient.Query
-	currentHeight, err := s.sqdClient.CurrentHeight(ctx)
-	if err != nil {
-		return nil, err
-	}
+	queryChan := make(chan queryResult, 1)
+	heightChan := make(chan heightResult, 1)
 
-	// This response always returns the first and last block in the range even if there is no match as a way to indicate the blocks searched.
-	blockResult.BlockRange = [2]*big.Int{
-		big.NewInt(int64(res[0].Header.Slot)),
-		big.NewInt(int64(currentHeight)),
-	}
+	// Launch goroutines for parallel execution
+	go func() {
+		limit := int(blockReq.Limit.Int64())
+		res, err := s.sqdClient.Query(ctx, req, &limit)
+		if err != nil {
+			queryChan <- queryResult{err: err}
+			return
+		}
 
-	slog.Info("Filter blocks", "num blocks", len(res))
-
-	if SINGLE_REQUEST {
+		// Transform blocks within the goroutine
+		blocks := make([]*solana.Block, 0, len(res))
 		for _, block := range res {
 			rpcBlock, err := sqd.TransformBlock(block)
 			if err != nil {
 				slog.Error("Failed to transform block", "error", err, "block num", block.Header.Slot)
-				return nil, err
+				queryChan <- queryResult{err: err}
+				return
 			}
 			if rpcBlock == nil {
-				return nil, fmt.Errorf("Block %d is nil", block.Header.Slot)
+				queryChan <- queryResult{err: fmt.Errorf("Block %d is nil", block.Header.Slot)}
+				return
 			}
-			blockResult.Blocks = append(blockResult.Blocks, rpcBlock)
+			blocks = append(blocks, rpcBlock)
 		}
-		return blockResult, nil
-	}
-
-	// Fetch all the matching blocks with full content
-	blocks := make([]*solana.Block, len(res))
-	wg := sync.WaitGroup{}
-	errChan := make(chan error)
-	for idx, block := range res {
-		wg.Add(1)
-		go func() {
-			req := sqd.SolanaRequest{
-				Type:      "solana",
-				FromBlock: uint(block.Header.Slot), // Legacy should use height
-				ToBlock:   uint(block.Header.Slot), // Legacy should use height
-				Fields:    s.sqdClient.GetAllFields(),
-				// Empty filters for all data to get a full block
-				Transactions:  []sqd.TransactionRequest{{}},
-				Instructions:  []sqd.InstructionRequest{{}},
-				Rewards:       []sqd.RewardRequest{{}},
-				TokenBalances: []sqd.TokenBalanceRequest{{}},
-				Balances:      []sqd.BalancesRequest{{}},
-				Logs:          []sqd.LogRequest{{}},
-			}
-
-			res, err := s.sqdClient.Query(ctx, req, &limit)
-			if err != nil {
-				errChan <- err
-				return
-			}
-			fullBlock, err := sqd.TransformBlock(res[0])
-			if err != nil {
-				errChan <- fmt.Errorf("Failed to resolve block %v: %v", block.Header.Height, err)
-				return
-			}
-			blocks[idx] = fullBlock
-			defer wg.Done()
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(errChan)
+		queryChan <- queryResult{res: res, blocks: blocks}
 	}()
 
-	if err := <-errChan; err != nil {
-		slog.Error("Failed to get full block", "error", err)
-		return nil, err
+	go func() {
+		height, err := s.sqdClient.CurrentHeight(ctx)
+		heightChan <- heightResult{height, err}
+	}()
+
+	// Wait for both results
+	queryRes := <-queryChan
+	if queryRes.err != nil {
+		slog.Error("Failed to run filter query", "error", queryRes.err)
+		return nil, queryRes.err
 	}
 
-	blockResult.Blocks = blocks
+	heightRes := <-heightChan
+	if heightRes.err != nil {
+		return nil, heightRes.err
+	}
 
+	// This response always returns the first and last block in the range even if there is no match as a way to indicate the blocks searched.
+	blockResult.BlockRange = [2]*big.Int{
+		big.NewInt(int64(queryRes.res[0].Header.Slot)),
+		big.NewInt(int64(heightRes.height)),
+	}
+
+	slog.Info("Filter blocks", "num blocks", len(queryRes.res), "block range", big.NewInt(0).Sub(blockReq.ToBlock, blockReq.FromBlock))
+	blockResult.Blocks = queryRes.blocks
 	return blockResult, nil
 }
 
