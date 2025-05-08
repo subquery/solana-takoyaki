@@ -209,7 +209,6 @@ func (s *SubqlApiService) FilterBlocks(ctx context.Context, blockReq BlockReques
 		big.NewInt(int64(heightRes.height)),
 	}
 
-	slog.Info("Filter blocks", "num blocks", len(queryRes.res), "block range", big.NewInt(0).Sub(blockReq.ToBlock, blockReq.FromBlock))
 	blockResult.Blocks = queryRes.blocks
 	return blockResult, nil
 }
